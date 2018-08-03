@@ -353,6 +353,7 @@ class Blockchain(util.PrintError):
             #print("Bailing early index < len(self.checkpoints)")
             _, t, b, _ = self.checkpoints[index]
             return b, t
+
         # if height < 4300128:
         #     # newyorkcoin: go back the full period unless it's the first retarget
         #     first = self.read_header((height - 2016 - 1 if height > 2016 else 0))
@@ -389,6 +390,7 @@ class Blockchain(util.PrintError):
         #     new_bits = bitsN << 24 | bitsBase
         #     #print("returning new bits")
         #     return new_bits, bitsBase << (8 * (bitsN-3))
+
         else:
             #print("returning kgw")
             return self.KimotoGravityWell(height, chain)
