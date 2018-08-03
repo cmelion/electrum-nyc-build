@@ -179,14 +179,14 @@ class Blockchain(util.PrintError):
             return
 
         if check_bits_target:
+            # If we are in legacy block heights, skip PoW verification
+            if header.get("block_height") < 4800000:
+                return
             if bits != header.get('bits'):
                 print("bits mismatch: %s vs %s" % (bits, header.get('bits')))
                 #raise BaseException("bits mismatch: %s vs %s" % (bits, header.get('bits')))
                 # increase count of failed verifications
                 #self.outliers += 1
-            # If we are in legacy block heights, skip PoW verification
-            if header.get("block_height") < 4800000:
-                return
             _powhash = pow_hash_header(header)
             if int('0x' + _powhash, 16) > target:
                 raise BaseException("insufficient proof of work: %s vs target %s" % (int('0x' + _powhash, 16), target))
@@ -353,47 +353,14 @@ class Blockchain(util.PrintError):
             #print("Bailing early index < len(self.checkpoints)")
             _, t, b, _ = self.checkpoints[index]
             return b, t
-
-        # if height < 4300128:
-        #     # newyorkcoin: go back the full period unless it's the first retarget
-        #     first = self.read_header((height - 2016 - 1 if height > 2016 else 0))
-        #     last = self.read_header(height - 1)
-        #     if last is None:
-        #         last = chain.get(height - 1)
-        #     assert last is not None
-        #     # bits to target
-        #     bits = last.get('bits')
-        #     #print("last read height %d" % last.get('block_height'))
-        #     bitsN = (bits >> 24) & 0xff
-        #     if not (bitsN >= 0x03 and bitsN <= 0x1e):
-        #         raise BaseException("First part of bits should be in [0x03, 0x1e]")
-        #     bitsBase = bits & 0xffffff
-        #     if not (bitsBase >= 0x8000 and bitsBase <= 0x7fffff):
-        #         raise BaseException("Second part of bits should be in [0x8000, 0x7fffff]")
-        #     target = bitsBase << (8 * (bitsN-3))
-        #     if height % 2016 != 0:
-        #         return bits, target
-        #     # new target
-        #     nActualTimespan = last.get('timestamp') - first.get('timestamp')
-        #     nTargetTimespan = 2 * 60 * 60
-        #     nActualTimespan = max(nActualTimespan, nTargetTimespan // 4)
-        #     nActualTimespan = min(nActualTimespan, nTargetTimespan * 4)
-        #     new_target = min(MAX_TARGET, (target*nActualTimespan) // nTargetTimespan)
-        #     # convert new target to bits
-        #     c = ("%064x" % int(new_target))[2:]
-        #     while c[:2] == '00' and len(c) > 6:
-        #         c = c[2:]
-        #     bitsN, bitsBase = len(c) // 2, int('0x' + c[:6], 16)
-        #     if bitsBase >= 0x800000:
-        #         bitsN += 1
-        #         bitsBase >>= 8
-        #     new_bits = bitsN << 24 | bitsBase
-        #     #print("returning new bits")
-        #     return new_bits, bitsBase << (8 * (bitsN-3))
-
-        else:
+        #legacy blocks until block 4800000
+        if height < 4800000:
             #print("returning kgw")
             return self.KimotoGravityWell(height, chain)
+
+        # else: #return new digishield targets
+        #     #print("returning digishield")
+        #     return self.KimotoGravityWell(height, chain)
 
     def convbits(self, new_target):
         c = ("%064x" % int(new_target))[2:]
