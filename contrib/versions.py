@@ -1,1 +1,1 @@
-version_apk = '0.1.1'
+version_apk = '0.2.1'
