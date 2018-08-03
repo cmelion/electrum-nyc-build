@@ -5,9 +5,9 @@ Electrum-NYC - Lightweight NewYorkCoin client
 
   Licence: MIT Licence
   Original Author: Thomas Voegtlin
-  Port Maintainer: Pooler
+  Port Maintainer: MrSlosh
   Language: Python
-  Homepage: https://electrum-nyc.org/
+  Homepage: https://nycoin.community/
 
 
 
@@ -50,8 +50,8 @@ Development version
 
 Check out the code from GitHub::
 
-    git clone git://github.com/pooler/electrum-nyc.git
-    cd electrum-nyc
+    git clone https://github.com/NewYorkCoin-NYC/electrum-nyc-build.git
+    cd electrum-nyc-build
 
 Run install (this should install dependencies)::
 
