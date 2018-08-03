@@ -177,20 +177,24 @@ class Blockchain(util.PrintError):
             raise BaseException("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
+
         if check_bits_target:
             if bits != header.get('bits'):
-                print("bits mistmatch at height %d" % header.get('block_height') + ", outliers++")
+                print("bits mismatch: %s vs %s" % (bits, header.get('bits')))
                 #raise BaseException("bits mismatch: %s vs %s" % (bits, header.get('bits')))
                 # increase count of failed verifications
-                self.outliers += 1
-
+                #self.outliers += 1
+            # If we are in legacy block heights, skip PoW verification
+            if header.get("block_height") < 4800000:
+                return
             _powhash = pow_hash_header(header)
             if int('0x' + _powhash, 16) > target:
                 raise BaseException("insufficient proof of work: %s vs target %s" % (int('0x' + _powhash, 16), target))
 
     def should_check_bits_target(self, height):
         if 'ANDROID_DATA' in os.environ:
-            return False
+            if height < 4800000:
+                return False
         index = height // 2016
         return (index > len(self.checkpoints) + 1) or \
              (index < len(self.checkpoints) and height % 2016 == 0)
@@ -206,14 +210,15 @@ class Blockchain(util.PrintError):
 
             bits, target = None, None
             check_bits_target = self.should_check_bits_target(index * 2016 + i)
+
             if(check_bits_target):
                 bits, target = self.get_target((index * 2016 + i), headers)
 
             self.verify_header(header, prev_hash, bits, target, check_bits_target)
             prev_hash = hash_header(header)
             # If the number of failed verifications reaches higher than 10%, shit a brick
-            if(self.outliers / 2016 > 0.1):
-                raise BaseException("10 percent or more of the chunk is invalid")
+            if(self.outliers / 2016 > 0.2):
+                raise BaseException("20 percent or more of the chunk is invalid")
         # reset verfication count for each chunk
         self.outliers = 0
 
@@ -348,42 +353,44 @@ class Blockchain(util.PrintError):
             #print("Bailing early index < len(self.checkpoints)")
             _, t, b, _ = self.checkpoints[index]
             return b, t
-        if height < 4800000:
-            # newyorkcoin: go back the full period unless it's the first retarget
-            first = self.read_header((height - 2016 - 1 if height > 2016 else 0))
-            last = self.read_header(height - 1)
-            if last is None:
-                last = chain.get(height - 1)
-            assert last is not None
-            # bits to target
-            bits = last.get('bits')
-            #print("last read height %d" % last.get('block_height'))
-            bitsN = (bits >> 24) & 0xff
-            if not (bitsN >= 0x03 and bitsN <= 0x1e):
-                raise BaseException("First part of bits should be in [0x03, 0x1e]")
-            bitsBase = bits & 0xffffff
-            if not (bitsBase >= 0x8000 and bitsBase <= 0x7fffff):
-                raise BaseException("Second part of bits should be in [0x8000, 0x7fffff]")
-            target = bitsBase << (8 * (bitsN-3))
-            if height % 2016 != 0:
-                return bits, target
-            # new target
-            nActualTimespan = last.get('timestamp') - first.get('timestamp')
-            nTargetTimespan = 2 * 60 * 60
-            nActualTimespan = max(nActualTimespan, nTargetTimespan // 4)
-            nActualTimespan = min(nActualTimespan, nTargetTimespan * 4)
-            new_target = min(MAX_TARGET, (target*nActualTimespan) // nTargetTimespan)
-            # convert new target to bits
-            c = ("%064x" % int(new_target))[2:]
-            while c[:2] == '00' and len(c) > 6:
-                c = c[2:]
-            bitsN, bitsBase = len(c) // 2, int('0x' + c[:6], 16)
-            if bitsBase >= 0x800000:
-                bitsN += 1
-                bitsBase >>= 8
-            new_bits = bitsN << 24 | bitsBase
-            #print("returning new bits")
-            return new_bits, bitsBase << (8 * (bitsN-3))
+
+        # if height < 4300128:
+        #     # newyorkcoin: go back the full period unless it's the first retarget
+        #     first = self.read_header((height - 2016 - 1 if height > 2016 else 0))
+        #     last = self.read_header(height - 1)
+        #     if last is None:
+        #         last = chain.get(height - 1)
+        #     assert last is not None
+        #     # bits to target
+        #     bits = last.get('bits')
+        #     #print("last read height %d" % last.get('block_height'))
+        #     bitsN = (bits >> 24) & 0xff
+        #     if not (bitsN >= 0x03 and bitsN <= 0x1e):
+        #         raise BaseException("First part of bits should be in [0x03, 0x1e]")
+        #     bitsBase = bits & 0xffffff
+        #     if not (bitsBase >= 0x8000 and bitsBase <= 0x7fffff):
+        #         raise BaseException("Second part of bits should be in [0x8000, 0x7fffff]")
+        #     target = bitsBase << (8 * (bitsN-3))
+        #     if height % 2016 != 0:
+        #         return bits, target
+        #     # new target
+        #     nActualTimespan = last.get('timestamp') - first.get('timestamp')
+        #     nTargetTimespan = 2 * 60 * 60
+        #     nActualTimespan = max(nActualTimespan, nTargetTimespan // 4)
+        #     nActualTimespan = min(nActualTimespan, nTargetTimespan * 4)
+        #     new_target = min(MAX_TARGET, (target*nActualTimespan) // nTargetTimespan)
+        #     # convert new target to bits
+        #     c = ("%064x" % int(new_target))[2:]
+        #     while c[:2] == '00' and len(c) > 6:
+        #         c = c[2:]
+        #     bitsN, bitsBase = len(c) // 2, int('0x' + c[:6], 16)
+        #     if bitsBase >= 0x800000:
+        #         bitsN += 1
+        #         bitsBase >>= 8
+        #     new_bits = bitsN << 24 | bitsBase
+        #     #print("returning new bits")
+        #     return new_bits, bitsBase << (8 * (bitsN-3))
+
         else:
             #print("returning kgw")
             return self.KimotoGravityWell(height, chain)
@@ -399,6 +406,28 @@ class Blockchain(util.PrintError):
         new_bits = bitsN << 24 | bitsBase
         return new_bits
 
+    def convlegacybits(self, new_target):
+        c = ("%064x" % int(new_target))[2:]
+        while c[:2] == '00' and len(c) > 6:
+            c = c[2:]
+        bitsN, bitsBase = len(c) // 2, int('0x' + c[:6], 16)
+        newbase = 0
+        if bitsN <= 3:
+            newbase = bitsBase << (8 * (3-bitsN))
+        else:
+            newbase = bitsBase >> (8 * (bitsN - 3))
+        if (newbase * 0x00800000) == 1:
+            bitsN += 1
+            newbase >>= 8
+        new_bits = bitsN << 24 | newbase
+        final_bits = new_bits
+        if (newbase * 0x00800000) == 1:
+
+            final_bits = new_bits | 0x00800000
+        else:
+            final_bits = new_bits | 0
+        return final_bits
+
     def convbignum(self, bits):
         bitsN = (bits >> 24) & 0xff
         if not (bitsN >= 0x03 and bitsN <= 0x1e):
@@ -406,7 +435,29 @@ class Blockchain(util.PrintError):
         bitsBase = bits & 0xffffff
         if not (bitsBase >= 0x8000 and bitsBase <= 0x7fffff):
             raise BaseException("Second part of bits should be in [0x8000, 0x7fffff]")
-        target = bitsBase << (8 * (bitsN-3))
+        if bitsN <= 0x03:
+            target = bitsBase >> (8 * (0x03 - bitsN))
+        else:
+            target = bitsBase << (8 * (bitsN - 0x03))
+        return target
+
+    def convlegacybignum(self,bits):
+        bitsN = (bits >> 24)
+        fNegative = False
+        if (bits & 0x00800000) != 0:
+
+            fNegative = True
+        if not (bitsN >= 0x03 and bitsN <= 0x1e):
+            raise BaseException("First part of bits should be in [0x03, 0x1e]")
+        bitsBase = bits & 0x007ffffff
+        if not (bitsBase >= 0x8000 and bitsBase <= 0x7fffff):
+            raise BaseException("Second part of bits should be in [0x8000, 0x7fffff]")
+        if bitsN <= 3:
+            target = bitsBase >> (8 * (3 - bitsN))
+        else:
+            target = bitsBase << (8 * (bitsN - 3))
+        if fNegative == True:
+            target = -target
         return target
 
     def can_connect(self, header, check_height=True):
@@ -456,7 +507,7 @@ class Blockchain(util.PrintError):
 
 
         if (BlockLastSolvedIndex <= 0 or BlockLastSolvedIndex < PastSecondsMin):
-            #print("maybe here")
+            print("maybe here")
             new_target = bnProofOfWorkLimit
             new_bits = self.convbits(new_target)
             return new_bits, new_target
@@ -467,8 +518,9 @@ class Blockchain(util.PrintError):
 
 
         for i in range(1, int(PastBlocksMax)+1):
-
-            PastBlocksMass = PastBlocksMass + 1
+            if PastBlocksMax > 0 and i > PastBlocksMax:
+                break;
+            PastBlocksMass = i
 
             reading = chain.get(BlockReadingIndex)
             if reading == None:
@@ -505,11 +557,12 @@ class Blockchain(util.PrintError):
 
                 if ((PastRateAdjustmentRatio <= EventHorizonDeviationSlow) or (PastRateAdjustmentRatio >= EventHorizonDeviationFast)):
                     break
+                if (BlockReadingIndex < 1):
+                    break
 
 
-            if (BlockReadingIndex < 1):
-                break
             BlockReadingIndex = BlockReadingIndex - 1
+
 
         #print("PastDifficultyAverage %d" % PastDifficultyAverage)
         bnNew = PastDifficultyAverage
@@ -519,7 +572,7 @@ class Blockchain(util.PrintError):
         else:
             print("PastDifficultyAverage Unaltered")
         if (bnNew > bnProofOfWorkLimit):
-            print("bnNew greater than proof of work limit")
+            #print("bnNew greater than proof of work limit")
             bnNew = bnProofOfWorkLimit
 
         # new target
