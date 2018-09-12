@@ -775,6 +775,7 @@ class Network(util.DaemonThread):
         interface.print_error("requesting chunk %d" % index)
         self.requested_chunks.add(index)
         self.queue_request('blockchain.block.get_chunk', [index], interface)
+        interface.print_error('leaving request_chunk')
 
     def on_get_chunk(self, interface, response):
         '''Handle receiving a chunk of block headers'''
@@ -795,11 +796,13 @@ class Network(util.DaemonThread):
         self.requested_chunks.remove(index)
         connect = blockchain.connect_chunk(index, result)
         if not connect:
+            interface.print_error('connection down')
             self.connection_down(interface.server)
             return
         # If not finished, get the next chunk
         if index >= len(blockchain.checkpoints) and blockchain.height() < interface.tip:
             self.request_chunk(interface, index+1)
+            interface.print_error('request_chunk completed')
         else:
             interface.mode = 'default'
             interface.print_error('catch up done', blockchain.height())

@@ -26,6 +26,7 @@ import threading
 from . import util
 from . import bitcoin
 from . import constants
+from . import auxpow
 from .bitcoin import *
 from decimal import Decimal
 from decimal import getcontext
@@ -50,20 +51,35 @@ def serialize_header(res):
         + int_to_hex(int(res.get('nonce')), 4)
     return s
 
-def deserialize_header(s, height):
+def deserialize_header(s, height, expect_trailing_data=False, start_position=0):
     if not s:
         raise Exception('Invalid header: {}'.format(s))
-    if len(s) != 80:
+    if len(s) - start_position < 80:
         raise Exception('Invalid header length: {}'.format(len(s)))
     hex_to_int = lambda s: int('0x' + bh2u(s[::-1]), 16)
     h = {}
-    h['version'] = hex_to_int(s[0:4])
-    h['prev_block_hash'] = hash_encode(s[4:36])
-    h['merkle_root'] = hash_encode(s[36:68])
-    h['timestamp'] = hex_to_int(s[68:72])
-    h['bits'] = hex_to_int(s[72:76])
-    h['nonce'] = hex_to_int(s[76:80])
+    h['version'] = hex_to_int(s[start_position+0:start_position+4])
+    h['prev_block_hash'] = hash_encode(s[start_position+4:start_position+36])
+    h['merkle_root'] = hash_encode(s[start_position+36:start_position+68])
+    h['timestamp'] = hex_to_int(s[start_position+68:start_position+72])
+    h['bits'] = hex_to_int(s[start_position+72:start_position+76])
+    h['nonce'] = hex_to_int(s[start_position+76:start_position+80])
     h['block_height'] = height
+
+    if auxpow.auxpow_active(h):
+        if expect_trailing_data:
+            h['auxpow'], start_position = auxpow.deserialize_auxpow_header(h, s, expect_trailing_data=True, start_position=start_position+80)
+        else:
+            h['auxpow'] = auxpow.deserialize_auxpow_header(h, s, start_position=start_position+80)
+    else:
+        if expect_trailing_data:
+            start_position = start_position+80
+        elif len(s) - start_position != 80:
+            raise Exception('Invalid header length: {}'.format(len(s) - start_position))
+
+    if expect_trailing_data:
+        return h, start_position
+
     return h
 
 def hash_header(header):
@@ -171,25 +187,30 @@ class Blockchain(util.PrintError):
         p = self.path()
         self._size = os.path.getsize(p)//80 if os.path.exists(p) else 0
 
-    def verify_header(self, header, prev_hash, bits, target, check_bits_target=True):
-        _hash = hash_header(header)
+    def verify_header(self, header, prev_hash, target):
+        _hash = auxpow.hash_parent_header(header)
         if prev_hash != header.get('prev_block_hash'):
             raise BaseException("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
 
-        if check_bits_target:
-            # If we are in legacy block heights, skip PoW verification
-            if header.get("block_height") < 4800000:
-                return
-            if bits != header.get('bits'):
-                print("bits mismatch: %s vs %s" % (bits, header.get('bits')))
-                #raise BaseException("bits mismatch: %s vs %s" % (bits, header.get('bits')))
-                # increase count of failed verifications
-                #self.outliers += 1
-            _powhash = pow_hash_header(header)
-            if int('0x' + _powhash, 16) > target:
-                raise BaseException("insufficient proof of work: %s vs target %s" % (int('0x' + _powhash, 16), target))
+        bits = self.get_target(target)
+        if(bits != header.get('bits')):
+            raise BaseException("bits mismatch: %s vs %s" % (bits, header.get('bits')))
+        if int('0x' + _powhash, 16) > target:
+            raise BaseException("insufficient proof of work: %s vs target %s" % (int('0x' + _powhash, 16), target))
+        # if check_bits_target:
+        #     # If we are in legacy block heights, skip PoW verification
+        #     if header.get("block_height") < 4800000 and constants.net.TESTNET == False:
+        #         return
+        #     if bits != header.get('bits'):
+        #         print("bits mismatch: %s vs %s" % (bits, header.get('bits')))
+        #         raise BaseException("bits mismatch: %s vs %s" % (bits, header.get('bits')))
+        #         # increase count of failed verifications
+        #         #self.outliers += 1
+        #     _powhash = pow_hash_header(header)
+        #     if int('0x' + _powhash, 16) > target:
+        #         raise BaseException("insufficient proof of work: %s vs target %s" % (int('0x' + _powhash, 16), target))
 
     def should_check_bits_target(self, height):
         if 'ANDROID_DATA' in os.environ:
@@ -200,27 +221,45 @@ class Blockchain(util.PrintError):
              (index < len(self.checkpoints) and height % 2016 == 0)
 
     def verify_chunk(self, index, data):
-        num = len(data) // 80
-        prev_hash = self.get_hash(index * 2016 - 1)
-        headers = {}
-        for i in range(num):
-            raw_header = data[i*80:(i+1) * 80]
-            header = deserialize_header(raw_header, index*2016 + i)
-            headers[header.get('block_height')] = header
+        stripped = bytearray()
+        start_position = 0
+        prev_hash = sef.get_hash(index * 2016 -1)
+        target = self.get_target(index - 1)
+        i = 0
+        #print("length of data %d", len(data))
+        while start_position < len(data):
+            # strip auxpow header for disk
+            stripped.extend(data[start_position:startposition+80])
 
-            bits, target = None, None
-            check_bits_target = self.should_check_bits_target(index * 2016 + i)
-
-            if(check_bits_target):
-                bits, target = self.get_target((index * 2016 + i), headers)
-
-            self.verify_header(header, prev_hash, bits, target, check_bits_target)
+            header, start_position = deserialize_header(data, index * 2016 + i, expect_trailing_data=True, start_position = start_position)
+            self.verify_header(header, prev_hash, target)
             prev_hash = hash_header(header)
-            # If the number of failed verifications reaches higher than 10%, shit a brick
-            if(self.outliers / 2016 > 0.2):
-                raise BaseException("20 percent or more of the chunk is invalid")
-        # reset verfication count for each chunk
-        self.outliers = 0
+
+            i = i + 1
+
+        return bytes(stripped)
+
+        # num = len(data) // 80
+        # prev_hash = self.get_hash(index * 2016 - 1)
+        # headers = {}
+        # for i in range(num):
+        #     raw_header = data[i*80:(i+1) * 80]
+        #     header = deserialize_header(raw_header, index*2016 + i)
+        #     headers[header.get('block_height')] = header
+        #
+        #     bits, target = None, None
+        #     check_bits_target = self.should_check_bits_target(index * 2016 + i)
+        #
+        #     if(check_bits_target):
+        #         bits, target = self.get_target((index * 2016 + i), headers)
+        #
+        #     self.verify_header(header, prev_hash, bits, target, check_bits_target)
+        #     prev_hash = hash_header(header)
+        #     # If the number of failed verifications reaches higher than 10%, shit a brick
+        #     if(self.outliers / 2016 > 0.2):
+        #         raise BaseException("20 percent or more of the chunk is invalid")
+        # # reset verfication count for each chunk
+        # self.outliers = 0
 
     def path(self):
         d = util.get_headers_dir(self.config)
@@ -358,9 +397,9 @@ class Blockchain(util.PrintError):
             #print("returning kgw")
             return self.KimotoGravityWell(height, chain)
 
-        # else: #return new digishield targets
+        else: #return new digishield targets
         #     #print("returning digishield")
-        #     return self.KimotoGravityWell(height, chain)
+            return self.get_digishield_target(height, chain)
 
     def convbits(self, new_target):
         c = ("%064x" % int(new_target))[2:]
@@ -448,11 +487,59 @@ class Blockchain(util.PrintError):
             #print("checking bits")
             bits, target = self.get_target(height)
         try:
-            self.verify_header(header, prev_hash, bits, target, check_bits_target)
+            self.verify_header(header, prev_hash, target)
         except BaseException as e:
             #print("header not verified %s" % e)
             return False
         return True
+
+    def get_digishield_target(self, height, chain={}):
+        if chain is None:
+            chain = {}
+
+        nPowTargetTimespan = 60 #1 minute
+
+        nPowTargetSpacing = 30 # .5 minute
+        nPowTargetSpacingDigisheld = 30 #.5 minute
+
+        DifficultyAdjustmentIntervalDigisheld = nPowTargetSpacingDigisheld // nPowTargetSpacing #1
+
+        AdjustmentInterval = DifficultyAdjustmentIntervalDigisheld
+
+        blockstogoback = AdjustmentInterval - 1
+        if (height != AdjustmentInterval):
+            blockstogoback = AdjustmentInterval
+
+        last_height = height - 1
+        first_height = last_height - blockstogoback
+
+        TargetTimespan = nPowTargetTimespan
+
+        first = chain.get(first_height)
+        if first is None:
+            first = self.read_header(first_height)
+        last = chain.get(last_height)
+        if last is None:
+            last = self.read_header(last_height)
+
+        nActualTimespan = last.get('timestamp') - first.get('timestamp')
+
+        nActualTimespan = TargetTimespan + int(float(nActualTimespan - TargetTimespan) / float(8))
+        nActualTimespan = max(nActualTimespan, TargetTimespan - int(float(TargetTimespan) / float(4)))
+        nActualTimespan = min(nActualTimespan, TargetTimespan + int(float(TargetTimespan) / float(2)))
+
+        bits = last.get('bits')
+        bnNew = self.convbignum(bits)
+        if height % AdjustmentInterval != 0:
+            return bits, bnNew
+
+        # retarget
+        bnNew *= nActualTimespan
+        bnNew //= TargetTimespan
+        bnNew = min(bnNew, MAX_TARGET)
+
+        new_bits = self.convbits(bnNew)
+        return new_bits, bnNew
 
     def KimotoGravityWell(self, height, chain={}):
         BlocksTargetSpacing = 0.5 * 60  # 30 seconds
